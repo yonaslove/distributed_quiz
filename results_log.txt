@@ -1,0 +1,5 @@
+Time: 1765568062988 | UserID: 1 | Score: 2
+Time: 1765568111456 | UserID: 2 | Score: 0
+Time: 1765568128000 | UserID: 2 | Score: 0
+Time: 1765572019464 | UserID: 2 | Score: 1
+Time: 1765572082171 | UserID: 1 | Score: 0
