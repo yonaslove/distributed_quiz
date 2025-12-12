@@ -23,4 +23,7 @@ public interface QuizService extends Remote {
 
     // Code Migration: Server sends the sorting logic object to client
     ShuffleStrategy getShuffleStrategy() throws RemoteException;
+
+    // Admin/Teacher Feature
+    java.util.List<String> getAllResults() throws RemoteException;
 }

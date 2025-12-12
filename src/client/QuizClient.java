@@ -148,7 +148,11 @@ public class QuizClient extends JFrame {
             SwingUtilities.invokeLater(() -> {
                 if (user != null) {
                     currentUser = user;
-                    loadQuiz();
+                    if ("TEACHER".equalsIgnoreCase(user.getRole())) {
+                        loadTeacherDashboard();
+                    } else {
+                        loadQuiz();
+                    }
                 } else if (service != null) {
                     JOptionPane.showMessageDialog(this, "Invalid Credentials");
                 }
@@ -156,10 +160,76 @@ public class QuizClient extends JFrame {
         }).start();
     }
 
+    // ---------------- TEACHER DASHBOARD ----------------
+    private void loadTeacherDashboard() {
+        cardLayout.show(mainPanel, "LOADING");
+        new Thread(() -> {
+            SwingUtilities.invokeLater(() -> {
+                mainPanel.add(createTeacherPanel(), "TEACHER");
+                cardLayout.show(mainPanel, "TEACHER");
+            });
+        }).start();
+    }
+
+    private JPanel createTeacherPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(CLR_BG);
+
+        // Header
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(CLR_BG);
+        JLabel titleLbl = new JLabel("  Admin Dashboard - " + currentUser.getUsername());
+        titleLbl.setForeground(CLR_FG);
+        titleLbl.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        header.add(titleLbl, BorderLayout.WEST);
+
+        panel.add(header, BorderLayout.NORTH);
+
+        // Content (Log Area)
+        JTextArea logArea = new JTextArea();
+        logArea.setEditable(false);
+        logArea.setFont(new Font("Consolas", Font.PLAIN, 12));
+        logArea.setBackground(new Color(40, 40, 40));
+        logArea.setForeground(Color.CYAN);
+        JScrollPane scroll = new JScrollPane(logArea);
+        panel.add(scroll, BorderLayout.CENTER);
+
+        // Buttons
+        JPanel btnPanel = new JPanel();
+        btnPanel.setBackground(CLR_BG);
+
+        JButton refreshBtn = createStyledButton("Refresh Logs");
+        refreshBtn.addActionListener(e -> {
+            new Thread(() -> {
+                java.util.List<String> logs = executeSafe(() -> service.getAllResults());
+                SwingUtilities.invokeLater(() -> {
+                    logArea.setText("");
+                    if (logs != null) {
+                        for (String line : logs)
+                            logArea.append(line + "\n");
+                    }
+                });
+            }).start();
+        });
+
+        JButton logoutBtn = createStyledButton("Logout");
+        logoutBtn.setBackground(Color.RED.darker());
+        logoutBtn.addActionListener(e -> cardLayout.show(mainPanel, "LOGIN"));
+
+        btnPanel.add(refreshBtn);
+        btnPanel.add(logoutBtn);
+        panel.add(btnPanel, BorderLayout.SOUTH);
+
+        // Initial Load
+        refreshBtn.doClick();
+
+        return panel;
+    }
+    // ---------------------------------------------------
+
     private void loadQuiz() {
         cardLayout.show(mainPanel, "LOADING");
         new Thread(() -> {
-            // First Get Questions
             List<Question> questions = executeSafe(() -> service.getQuestions());
 
             // Then Get Shuffle Logic (Code Migration)

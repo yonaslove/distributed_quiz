@@ -3,3 +3,7 @@ Time: 1765568111456 | UserID: 2 | Score: 0
 Time: 1765568128000 | UserID: 2 | Score: 0
 Time: 1765572019464 | UserID: 2 | Score: 1
 Time: 1765572082171 | UserID: 1 | Score: 0
+Time: 1765573923887 | UserID: 2 | Score: 0
+Time: 1765573963862 | UserID: 1 | Score: 1
+Time: 1765574676129 | UserID: 2 | Score: 0
+Time: 1765574940619 | UserID: 2 | Score: 2

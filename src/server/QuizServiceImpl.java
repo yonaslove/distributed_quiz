@@ -57,4 +57,21 @@ public class QuizServiceImpl extends UnicastRemoteObject implements QuizService 
     public common.ShuffleStrategy getShuffleStrategy() throws RemoteException {
         return new SmartShuffler();
     }
+
+    @Override
+    public java.util.List<String> getAllResults() throws RemoteException {
+        java.util.List<String> results = new java.util.ArrayList<>();
+        try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader("results_log.txt"))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                results.add(line);
+            }
+        } catch (java.io.FileNotFoundException e) {
+            results.add("No results log found yet.");
+        } catch (java.io.IOException e) {
+            e.printStackTrace();
+            results.add("Error reading log file.");
+        }
+        return results;
+    }
 }
