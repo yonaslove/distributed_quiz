@@ -101,6 +101,27 @@ public class QuizClient extends JFrame {
         try {
             return task.execute();
         } catch (Exception e) {
+            // Check if it's a logic error (App Exception) vs Network Error
+            if (!isConnectionError(e)) {
+                String msg = e.getMessage();
+                // Clean up RMI wrapper noise
+                if (msg != null) {
+                    if (msg.contains("nested exception is:")) {
+                        int index = msg.lastIndexOf("java.rmi.RemoteException:");
+                        if (index != -1) {
+                            msg = msg.substring(index + "java.rmi.RemoteException:".length()).trim();
+                        }
+                    }
+                    if (msg.contains("Server Exception:")) {
+                        msg = msg.replace("Server Exception:", "").trim();
+                    }
+                }
+                final String showMsg = (msg == null || msg.isEmpty()) ? "Unknown Error" : msg;
+                SwingUtilities.invokeLater(
+                        () -> JOptionPane.showMessageDialog(this, showMsg, "Error", JOptionPane.ERROR_MESSAGE));
+                return null;
+            }
+
             System.err.println("RMI Call Failed: " + e.getMessage());
             // Try to reconnect with Failover
             System.out.println("Attempting Failover Reconnect...");
@@ -120,6 +141,19 @@ public class QuizClient extends JFrame {
                     "Connection Lost to ALL Servers.\nLeader election might be in progress."));
             return null;
         }
+    }
+
+    private boolean isConnectionError(Exception e) {
+        if (e instanceof java.rmi.ConnectException || e instanceof java.rmi.ConnectIOException
+                || e instanceof java.rmi.UnknownHostException) {
+            return true;
+        }
+        String msg = e.getMessage();
+        if (msg == null)
+            return false;
+        msg = msg.toLowerCase();
+        return msg.contains("connection refused") || msg.contains("connection reset") || msg.contains("refused to host")
+                || msg.contains("lookup");
     }
     // -----------------------------------------------------------
 
@@ -186,16 +220,217 @@ public class QuizClient extends JFrame {
                     currentUser = user;
                     if ("TEACHER".equalsIgnoreCase(user.getRole())) {
                         loadTeacherDashboard();
+                    } else if ("CREATOR".equalsIgnoreCase(user.getRole())) {
+                        loadCreatorDashboard();
                     } else if (user.hasSubmitted()) {
                         JOptionPane.showMessageDialog(this,
                                 "You have already submitted this quiz.\nContact Admin to retake.");
                     } else {
-                        loadQuiz();
+                        loadSubjectSelection();
                     }
                 } else if (service != null) {
                     JOptionPane.showMessageDialog(this, "Invalid Credentials");
                 }
             });
+        }).start();
+    }
+
+    // ---------------- CREATOR DASHBOARD ----------------
+    private void loadCreatorDashboard() {
+        cardLayout.show(mainPanel, "LOADING");
+        SwingUtilities.invokeLater(() -> {
+            mainPanel.add(createCreatorPanel(), "CREATOR");
+            cardLayout.show(mainPanel, "CREATOR");
+        });
+    }
+
+    private JPanel createCreatorPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(CLR_BG);
+
+        // Header
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(new Color(230, 230, 230));
+        header.setBorder(new EmptyBorder(15, 20, 15, 20));
+
+        JLabel titleLbl = new JLabel("Exam Creator Dashboard");
+        titleLbl.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        titleLbl.setForeground(Color.DARK_GRAY);
+
+        JButton logoutBtn = new JButton("Logout");
+        logoutBtn.setBackground(new Color(231, 76, 60));
+        logoutBtn.setForeground(Color.WHITE);
+        logoutBtn.setFocusPainted(false);
+        logoutBtn.addActionListener(e -> cardLayout.show(mainPanel, "LOGIN"));
+
+        header.add(titleLbl, BorderLayout.WEST);
+        header.add(logoutBtn, BorderLayout.EAST);
+        panel.add(header, BorderLayout.NORTH);
+
+        // Content
+        JPanel content = new JPanel(new GridBagLayout());
+        content.setBackground(CLR_BG);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(10, 10, 10, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        JButton createSubjBtn = createStyledButton("Create New Exam (Draft)");
+        JButton addQueBtn = createStyledButton("Add Question to Exam");
+
+        createSubjBtn.addActionListener(e -> showCreateSubjectDialog());
+        addQueBtn.addActionListener(e -> showAddQuestionDialog());
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        content.add(createSubjBtn, gbc);
+
+        gbc.gridy = 1;
+        content.add(addQueBtn, gbc);
+
+        panel.add(content, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void showCreateSubjectDialog() {
+        JTextField nameF = new JTextField();
+        JTextField codeF = new JTextField();
+        Object[] msg = { "Exam Name:", nameF, "Access Code:", codeF };
+
+        int res = JOptionPane.showConfirmDialog(this, msg, "Create Exam", JOptionPane.OK_CANCEL_OPTION);
+        if (res == JOptionPane.OK_OPTION) {
+            new Thread(() -> {
+                try {
+                    // Default 2 hours from now
+                    java.sql.Timestamp start = new java.sql.Timestamp(System.currentTimeMillis());
+                    java.sql.Timestamp end = new java.sql.Timestamp(System.currentTimeMillis() + 7200000); // +2h
+                    boolean success = executeSafe(() -> service.addSubject(nameF.getText(), codeF.getText(), start, end,
+                            currentUser.getId()));
+                    SwingUtilities.invokeLater(() -> {
+                        if (success)
+                            JOptionPane.showMessageDialog(this, "Draft Exam Created!\nWait for Admin to Publish.");
+                        else
+                            JOptionPane.showMessageDialog(this, "Failed to create exam (Duplicate code?)");
+                    });
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }).start();
+        }
+    }
+
+    private void showAddQuestionDialog() {
+        JTextField subjIdF = new JTextField(); // Ideally a dropdown, but ID/Code is faster to impl
+        JTextArea qText = new JTextArea(3, 20);
+        JTextField optA = new JTextField();
+        JTextField optB = new JTextField();
+        JTextField optC = new JTextField();
+        JTextField optD = new JTextField();
+        JTextField correct = new JTextField("A");
+
+        Object[] msg = {
+                "Subject ID (See Admin):", subjIdF,
+                "Question:", new JScrollPane(qText),
+                "Option A:", optA, "Option B:", optB, "Option C:", optC, "Option D:", optD,
+                "Correct (A/B/C/D):", correct
+        };
+
+        int res = JOptionPane.showConfirmDialog(this, msg, "Add Question", JOptionPane.OK_CANCEL_OPTION);
+        if (res == JOptionPane.OK_OPTION) {
+            new Thread(() -> {
+                try {
+                    int sId = Integer.parseInt(subjIdF.getText());
+                    boolean success = executeSafe(() -> service.addQuestion(sId, qText.getText(), optA.getText(),
+                            optB.getText(), optC.getText(), optD.getText(), correct.getText()));
+                    SwingUtilities.invokeLater(() -> {
+                        if (success)
+                            JOptionPane.showMessageDialog(this, "Question Added!");
+                        else
+                            JOptionPane.showMessageDialog(this, "Failed to add question.");
+                    });
+                } catch (Exception ex) {
+                    SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage()));
+                }
+            }).start();
+        }
+    }
+    // ---------------------------------------------------
+
+    private void loadSubjectSelection() {
+        cardLayout.show(mainPanel, "LOADING");
+        SwingUtilities.invokeLater(() -> {
+            if (mainPanel.getComponentCount() > 0) {
+                // Check if panel already exists or just recreate
+            }
+            mainPanel.add(createSubjectSelectionPanel(), "SUBJECT_SELECT");
+            cardLayout.show(mainPanel, "SUBJECT_SELECT");
+        });
+    }
+
+    private JPanel createSubjectSelectionPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(CLR_BG);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(15, 15, 15, 15);
+
+        JLabel title = new JLabel("Select Exam Subject");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        title.setForeground(CLR_FG);
+
+        JLabel instr = new JLabel("Enter the Access Code provided by your instructor:");
+        instr.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        instr.setForeground(Color.GRAY);
+
+        JTextField codeField = new JTextField(15);
+        codeField.setFont(new Font("Monospaced", Font.BOLD, 16));
+        codeField.setHorizontalAlignment(JTextField.CENTER);
+
+        JButton startBtn = createStyledButton("Start Exam");
+        startBtn.setBackground(new Color(46, 204, 113)); // Green
+
+        startBtn.addActionListener(e -> {
+            String code = codeField.getText().trim();
+            if (code.isEmpty()) {
+                JOptionPane.showMessageDialog(panel, "Please enter a code.");
+                return;
+            }
+            startExamFlow(code);
+        });
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        panel.add(title, gbc);
+
+        gbc.gridy = 1;
+        panel.add(instr, gbc);
+
+        gbc.gridy = 2;
+        panel.add(codeField, gbc);
+
+        gbc.gridy = 3;
+        panel.add(startBtn, gbc);
+
+        return panel;
+    }
+
+    private void startExamFlow(String code) {
+        cardLayout.show(mainPanel, "LOADING");
+        new Thread(() -> {
+            try {
+                // 1. Validate Code
+                common.Subject subject = executeSafe(() -> service.validateSubjectCode(code, currentUser.getId()));
+
+                if (subject != null) {
+                    // 2. Load Questions for this Subject
+                    loadQuiz(subject);
+                }
+            } catch (Exception e) {
+                // Error handled in executeSafe usually, but for logic errors:
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(this, "Error: " + e.getMessage(), "Access Denied",
+                            JOptionPane.ERROR_MESSAGE);
+                    cardLayout.show(mainPanel, "SUBJECT_SELECT");
+                });
+            }
         }).start();
     }
 
@@ -257,6 +492,25 @@ public class QuizClient extends JFrame {
         toolbar.add(rankBtn);
         toolbar.add(refreshBtn);
         toolbar.add(allowRetryBtn);
+
+        JButton publishBtn = createStyledButton("Publish Exam");
+        publishBtn.setBackground(new Color(155, 89, 182)); // Purple
+        publishBtn.addActionListener(e -> {
+            String sIdStr = JOptionPane.showInputDialog(panel, "Enter Subject ID to Publish:");
+            if (sIdStr != null && !sIdStr.trim().isEmpty()) {
+                new Thread(() -> {
+                    boolean success = executeSafe(() -> service.publishSubject(Integer.parseInt(sIdStr.trim())));
+                    SwingUtilities.invokeLater(() -> {
+                        if (success)
+                            JOptionPane.showMessageDialog(panel, "Exam Published Successfully!");
+                        else
+                            JOptionPane.showMessageDialog(panel, "Failed to Publish Exam (Invalid ID?)");
+                    });
+                }).start();
+            }
+        });
+        toolbar.add(publishBtn);
+
         toolbar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 50));
 
         topContainer.add(header);
@@ -343,10 +597,10 @@ public class QuizClient extends JFrame {
     }
     // ---------------------------------------------------
 
-    private void loadQuiz() {
+    private void loadQuiz(common.Subject subject) {
         cardLayout.show(mainPanel, "LOADING");
         new Thread(() -> {
-            List<Question> questions = executeSafe(() -> service.getQuestions());
+            List<Question> questions = executeSafe(() -> service.getQuestions(subject.getId()));
 
             // Then Get Shuffle Logic (Code Migration)
             common.ShuffleStrategy shuffler = executeSafe(() -> service.getShuffleStrategy());
@@ -358,18 +612,19 @@ public class QuizClient extends JFrame {
                 }
 
                 SwingUtilities.invokeLater(() -> {
-                    mainPanel.add(createQuizPanel(questions), "QUIZ");
+                    mainPanel.add(createQuizPanel(questions, subject), "QUIZ");
                     cardLayout.show(mainPanel, "QUIZ");
                 });
             }
         }).start();
     }
 
-    private JPanel createQuizPanel(List<Question> questions) {
+    private JPanel createQuizPanel(List<Question> questions, common.Subject subject) {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(CLR_BG);
 
         JPanel content = new JPanel();
+
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         content.setBackground(CLR_BG);
         content.setBorder(new EmptyBorder(20, 20, 20, 20));
@@ -426,7 +681,7 @@ public class QuizClient extends JFrame {
         // Header with Clock
         JPanel header = new JPanel(new BorderLayout());
         header.setBackground(CLR_BG);
-        JLabel titleLbl = new JLabel("  Quiz Session - " + currentUser.getUsername());
+        JLabel titleLbl = new JLabel("  " + subject.getName() + " - " + currentUser.getUsername());
         titleLbl.setForeground(CLR_FG);
         titleLbl.setFont(new Font("Segoe UI", Font.BOLD, 16));
 
@@ -463,7 +718,7 @@ public class QuizClient extends JFrame {
         }).start();
 
         JButton submitBtn = createStyledButton("Submit Answers");
-        submitBtn.addActionListener(e -> submitAnswers(answerGroups));
+        submitBtn.addActionListener(e -> submitAnswers(answerGroups, subject.getId()));
         JPanel btnPanel = new JPanel();
         btnPanel.setBackground(CLR_BG);
         btnPanel.add(submitBtn);
@@ -472,7 +727,7 @@ public class QuizClient extends JFrame {
         return panel;
     }
 
-    private void submitAnswers(Map<Integer, ButtonGroup> groups) {
+    private void submitAnswers(Map<Integer, ButtonGroup> groups, int subjectId) {
         Map<Integer, String> answers = new HashMap<>();
         for (Map.Entry<Integer, ButtonGroup> entry : groups.entrySet()) {
             ButtonModel bm = entry.getValue().getSelection();
@@ -482,7 +737,7 @@ public class QuizClient extends JFrame {
         }
 
         new Thread(() -> {
-            Integer score = executeSafe(() -> service.submitMockQuiz(currentUser.getId(), answers));
+            Integer score = executeSafe(() -> service.submitMockQuiz(currentUser.getId(), subjectId, answers));
             SwingUtilities.invokeLater(() -> {
                 if (score != null) {
                     JOptionPane.showMessageDialog(this, "Quiz Completed!\nYour Score: " + score);
