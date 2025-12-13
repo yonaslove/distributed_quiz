@@ -9,3 +9,5 @@ Time: 1765574676129 | UserID: 2 | Score: 0
 Time: 1765574940619 | UserID: 2 | Score: 2
 Time: 1765577544471 | UserID: 1 | Score: 1
 Time: 1765578266495 | UserID: 1 | Score: 0
+Time: 1765588384746 | UserID: 1 | Score: 0
+Time: 1765588529782 | UserID: 3 | Score: 0

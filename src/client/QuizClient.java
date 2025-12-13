@@ -44,22 +44,52 @@ public class QuizClient extends JFrame {
         connectToServer();
     }
 
+    private java.util.Properties config;
+    private java.util.List<String> serverList = new java.util.ArrayList<>();
+
     private void connectToServer() {
         new Thread(() -> {
-            try {
-                // Ask user for Server IP (Default to localhost)
-                String serverIp = JOptionPane.showInputDialog(this, "Enter Server IP Address:", "localhost");
-                if (serverIp == null || serverIp.trim().isEmpty()) {
-                    serverIp = "localhost";
-                }
+            loadConfig();
 
-                Registry registry = LocateRegistry.getRegistry(serverIp, 1099);
-                service = (QuizService) registry.lookup("QuizService");
-            } catch (Exception e) {
-                SwingUtilities.invokeLater(
-                        () -> JOptionPane.showMessageDialog(this, "Could not connect to server: " + e.getMessage()));
+            boolean connected = false;
+            for (String serverAddr : serverList) {
+                try {
+                    String[] parts = serverAddr.split(":");
+                    String host = parts[0];
+                    int port = Integer.parseInt(parts[1]);
+
+                    System.out.println("Trying to connect to " + host + ":" + port + "...");
+                    Registry registry = LocateRegistry.getRegistry(host, port);
+                    service = (QuizService) registry.lookup("QuizService");
+                    System.out.println("Connected to Leader/Node at " + serverAddr);
+                    connected = true;
+                    break;
+                } catch (Exception e) {
+                    System.err.println("Failed to connect to " + serverAddr);
+                }
+            }
+
+            if (!connected) {
+                SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
+                        "Could not connect to ANY server in the cluster.\nPlease check config.properties."));
             }
         }).start();
+    }
+
+    private void loadConfig() {
+        config = new java.util.Properties();
+        try (java.io.InputStream input = new java.io.FileInputStream("config.properties")) {
+            config.load(input);
+            // Collect all vals that look like host:port
+            for (String key : config.stringPropertyNames()) {
+                if (key.startsWith("node.")) {
+                    serverList.add(config.getProperty(key));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Client could not load config.properties. Defaulting to localhost:1099");
+            serverList.add("localhost:1099");
+        }
     }
 
     // ---------------- ROBUST RMI CONNECTION LOGIC ----------------
@@ -72,18 +102,23 @@ public class QuizClient extends JFrame {
             return task.execute();
         } catch (Exception e) {
             System.err.println("RMI Call Failed: " + e.getMessage());
-            // Try to reconnect
-            try {
-                System.out.println("Attempting to reconnect to QuizService...");
-                Registry registry = LocateRegistry.getRegistry("localhost", 1099);
-                service = (QuizService) registry.lookup("QuizService");
-                System.out.println("Reconnected!");
-                return task.execute(); // Retry once
-            } catch (Exception ex) {
-                SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
-                        "Connection Lost to Server.\nLeader election might be in progress.\nPlease wait a moment and try again."));
-                return null;
+            // Try to reconnect with Failover
+            System.out.println("Attempting Failover Reconnect...");
+
+            for (String serverAddr : serverList) {
+                try {
+                    String[] parts = serverAddr.split(":");
+                    Registry registry = LocateRegistry.getRegistry(parts[0], Integer.parseInt(parts[1]));
+                    service = (QuizService) registry.lookup("QuizService");
+                    System.out.println("Reconnected to " + serverAddr);
+                    return task.execute(); // Retry success
+                } catch (Exception ex) {
+                }
             }
+
+            SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
+                    "Connection Lost to ALL Servers.\nLeader election might be in progress."));
+            return null;
         }
     }
     // -----------------------------------------------------------

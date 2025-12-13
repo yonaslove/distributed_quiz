@@ -31,4 +31,7 @@ public interface QuizService extends Remote {
     java.util.List<User> getAllStudents() throws RemoteException; // For ranking and display
 
     boolean resetStudentSubmission(int studentId) throws RemoteException; // Allow retry
+
+    // Distributed Consistency
+    void replicateSubmission(int studentId, int score) throws RemoteException;
 }

@@ -10,10 +10,12 @@ import java.util.Map;
 
 public class QuizServiceImpl extends UnicastRemoteObject implements QuizService {
     private DatabaseManager dbManager;
+    private QuizServer serverContext;
 
-    public QuizServiceImpl() throws RemoteException {
+    public QuizServiceImpl(QuizServer serverContext) throws RemoteException {
         super();
-        dbManager = new DatabaseManager();
+        this.serverContext = serverContext;
+        this.dbManager = new DatabaseManager();
     }
 
     @Override
@@ -32,7 +34,26 @@ public class QuizServiceImpl extends UnicastRemoteObject implements QuizService 
         System.out.println("User " + userId + " submitted quiz.");
         int score = dbManager.calculateScore(userId, answers);
         logResultToFile(userId, score);
+
+        // Broadcast to Replicas
+        if (serverContext != null) {
+            serverContext.broadcastReplication(userId, score);
+        }
+
         return score;
+    }
+
+    @Override
+    public void replicateSubmission(int studentId, int score) throws RemoteException {
+        System.out.println("[REPLICA] Received update: Student " + studentId + " scored " + score);
+        // In a real system, we might update a local cache or standby DB here.
+        // For now, we log it to prove consistency.
+        try (java.io.FileWriter fw = new java.io.FileWriter("replica_log.txt", true);
+                java.io.PrintWriter pw = new java.io.PrintWriter(fw)) {
+            pw.println("REPLICA SYNC | Student: " + studentId + " | Score: " + score);
+        } catch (java.io.IOException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override

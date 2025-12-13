@@ -9,17 +9,23 @@ import java.util.List;
 import java.util.Map;
 
 public class DatabaseManager {
-    private static final String URL = "jdbc:mysql://localhost:3300/distributed_quiz";
+    private static final String URL = "jdbc:mysql://localhost:3306/distributed_quiz";
     private static final String USER = "root";
     private static final String PASS = "";
 
     private Connection connection;
+
+    public Connection getConnection() {
+        return connection;
+    }
+
     private boolean useMock = false;
 
     public DatabaseManager() {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
-            connection = DriverManager.getConnection("jdbc:mysql://localhost:3300/", USER, PASS);
+            // Connect to server (no DB) to create DB if not exists
+            connection = DriverManager.getConnection("jdbc:mysql://localhost:3306/", USER, PASS);
             Statement stmt = connection.createStatement();
             stmt.executeUpdate("CREATE DATABASE IF NOT EXISTS distributed_quiz");
             stmt.close();
