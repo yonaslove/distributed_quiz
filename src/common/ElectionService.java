@@ -14,4 +14,9 @@ public interface ElectionService extends Remote {
 
     // Get ID of this node
     int getNodeId() throws RemoteException;
+
+    // Smart Redirection methods
+    int getCurrentLeaderId() throws RemoteException;
+
+    java.util.List<String> getClusterTopology() throws RemoteException;
 }

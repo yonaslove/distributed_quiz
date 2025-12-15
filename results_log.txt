@@ -25,3 +25,5 @@ Time: 1765718429357 | UserID: 6 | Score: 1
 Time: 1765718717574 | UserID: 6 | Score: 1
 Time: 1765718726682 | UserID: 6 | Score: 0
 Time: 1765734854751 | UserID: 15 | Score: 1
+Time: 1765818830272 | UserID: 3422 | Score: 0
+Time: 1765819523596 | UserID: 3420 | Score: 0

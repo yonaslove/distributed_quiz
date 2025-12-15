@@ -167,6 +167,18 @@ public class QuizServiceImpl extends UnicastRemoteObject implements QuizService 
         return new java.util.ArrayList<>(); // Legacy method stub
     }
 
+    @Override
+    public java.util.List<String> getClusterTopology() throws RemoteException {
+        // Return the list of "IP:Port" strings loaded by the server
+        List<String> nodes = new java.util.ArrayList<>();
+        // Iterate over Config Property keys starting with "node."?
+        // Or access the 'allNodes' from QuizServer if exposed?
+        // Let's modify QuizServer to expose the raw string list or Properties.
+        // For now, let's fetch from Properties via QuizServer helper or just re-read?
+        // Better: Add a method to QuizServer to get the raw topology strings.
+        return serverContext.getTopologyStrings();
+    }
+
     // New Admin Review Workflow Methods
     @Override
     public boolean approveExamDraft(int subjectId) throws RemoteException {

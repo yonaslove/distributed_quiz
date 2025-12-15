@@ -37,6 +37,18 @@ public class DebugDB {
             if (!hasSubs)
                 System.out.println("No submissions found.");
 
+            System.out.println("\n=== DEBUG: Questions for Subject 23 (civic) ===");
+            ResultSet rsQ = stmt
+                    .executeQuery("SELECT id, question_text, correct_option FROM questions WHERE subject_id = 23");
+            boolean hasQ = false;
+            while (rsQ.next()) {
+                hasQ = true;
+                System.out.printf("QID: %d | Text: %s | Correct: %s%n", rsQ.getInt("id"),
+                        rsQ.getString("question_text"), rsQ.getString("correct_option"));
+            }
+            if (!hasQ)
+                System.out.println("No questions found for Subject 23.");
+
         } catch (Exception e) {
             e.printStackTrace();
         }

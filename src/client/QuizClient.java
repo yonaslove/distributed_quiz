@@ -52,37 +52,106 @@ public class QuizClient extends JFrame {
         new Thread(() -> {
             loadConfig();
 
-            // Allow user to manually enter IP if they want (or if config is empty)
-            boolean useManual = false;
-            // Check if we should prompt (e.g., if config is missing or by default?)
-            // For now, let's try to connect to config first. If it fails, PROMPT the user.
-
+            // 1. Try Config First
             boolean connected = tryConnectToKnownServers();
 
+            // 2. If valid config failed, or no config, ASK USER
             if (!connected) {
                 // Connection failed for all config entries. Ask User.
                 askUserForIP();
+            } else {
+                // Connected successfully
+                updateTopology();
             }
         }).start();
     }
 
     private boolean tryConnectToKnownServers() {
         for (String serverAddr : serverList) {
-            try {
-                String[] parts = serverAddr.split(":");
-                String host = parts[0];
-                int port = Integer.parseInt(parts[1]);
-
-                System.out.println("Trying to connect to " + host + ":" + port + "...");
-                Registry registry = LocateRegistry.getRegistry(host, port);
-                service = (QuizService) registry.lookup("QuizService");
-                System.out.println("Connected to Leader/Node at " + serverAddr);
+            if (attemptConnection(serverAddr)) {
                 return true;
-            } catch (Exception e) {
-                System.err.println("Failed to connect to " + serverAddr);
             }
         }
         return false;
+    }
+
+    private boolean attemptConnection(String serverAddr) {
+        try {
+            String[] parts = serverAddr.split(":");
+            String host = parts[0];
+            int port = Integer.parseInt(parts[1]);
+
+            System.out.println("Trying to connect to " + host + ":" + port + "...");
+            Registry registry = LocateRegistry.getRegistry(host, port);
+
+            try {
+                service = (QuizService) registry.lookup("QuizService");
+                System.out.println("Connected to Leader/Node at " + serverAddr);
+                return true;
+            } catch (java.rmi.NotBoundException nbe) {
+                // If QuizService is not bound, it might be a BACKUP node (Node 2, 3, 4 etc)
+                // Let's ask it who the leader is.
+                System.out.println("QuizService not found at " + serverAddr + ". Checking if it's a backup node...");
+
+                // We need to guess the Node ID? Or just iterate 1..4?
+                // Or better: list the registry to find "Node_X"
+                String[] boundNames = registry.list();
+                for (String name : boundNames) {
+                    if (name.startsWith("Node_")) {
+                        common.ElectionService es = (common.ElectionService) registry.lookup(name);
+                        int leaderId = es.getCurrentLeaderId();
+                        System.out.println("Backup Node says Leader ID is: " + leaderId);
+
+                        if (leaderId != -1) {
+                            // Find Leader IP from Topology
+                            java.util.List<String> topo = es.getClusterTopology();
+                            if (topo != null && leaderId > 0 && leaderId <= topo.size()) {
+                                String leaderAddr = topo.get(leaderId - 1); // List is 0-indexed, ID 1-indexed
+                                if (!leaderAddr.equals(serverAddr)) {
+                                    System.out.println("Redirecting to Leader at: " + leaderAddr);
+
+                                    // RECURSIVE ATTEMPT
+                                    // Avoid infinite loop if config is wrong?
+                                    // Simple check: don't redirect to self (already checked above)
+                                    return attemptConnection(leaderAddr);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Prioritize this server in list for next time (simple optimization)
+            // But main logic is in updateTopology
+            return false; // Failed if we reach here
+        } catch (Exception e) {
+            System.err.println("Failed to connect to " + serverAddr + ": " + e.getMessage());
+        }
+        return false;
+    }
+
+    private void updateTopology() {
+        // Fetch latest cluster list from the server we just connected to
+        new Thread(() -> {
+            try {
+                java.util.List<String> cluster = service.getClusterTopology();
+                if (cluster != null && !cluster.isEmpty()) {
+                    System.out.println("Received Cluster Topology: " + cluster);
+                    // Update our list, avoiding duplicates but keeping order?
+                    // Actually, replace list or merge? For robustness, let's merge.
+                    for (String s : cluster) {
+                        if (!serverList.contains(s)) {
+                            serverList.add(s);
+                        }
+                    }
+                    if (connectionStatusLbl != null) {
+                        connectionStatusLbl.setText("Cluster Synced (" + cluster.size() + " nodes)");
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to update topology: " + e.getMessage());
+            }
+        }).start();
     }
 
     private void askUserForIP() {
@@ -94,24 +163,14 @@ public class QuizClient extends JFrame {
 
             if (input != null && !input.trim().isEmpty()) {
                 new Thread(() -> {
-                    try {
-                        String[] parts = input.trim().split(":");
-                        String host = parts[0];
-                        int port = (parts.length > 1) ? Integer.parseInt(parts[1]) : 1099;
-
-                        Registry registry = LocateRegistry.getRegistry(host, port);
-                        service = (QuizService) registry.lookup("QuizService");
-
-                        // Add to list for future failover
-                        serverList.add(0, input.trim());
-
-                        System.out.println("Connected to manually entered server: " + input);
+                    String cleanInput = input.trim();
+                    if (attemptConnection(cleanInput)) {
+                        serverList.add(0, cleanInput); // Add to front
+                        System.out.println("Connected to manually entered server: " + cleanInput);
                         JOptionPane.showMessageDialog(this, "Connected successfully!");
-                        if (connectionStatusLbl != null) {
-                            connectionStatusLbl.setText("Connected to: " + input.trim());
-                        }
-                    } catch (Exception e) {
-                        JOptionPane.showMessageDialog(this, "Connection Failed: " + e.getMessage());
+                        updateTopology(); // SYNC NOW
+                    } else {
+                        JOptionPane.showMessageDialog(this, "Connection Failed.");
                         // Retry?
                         askUserForIP();
                     }
@@ -137,10 +196,7 @@ public class QuizClient extends JFrame {
             System.err.println("Client could not load config.properties. Will prompt user.");
         }
 
-        // Add manual override if list is empty
-        if (serverList.isEmpty()) {
-            // We do nothing here, the connect loop will fail and trigger askUserForIP()
-        }
+        // Don't do anything else, connection loop handles empty list
     }
 
     // ---------------- ROBUST RMI CONNECTION LOGIC ----------------
@@ -174,17 +230,21 @@ public class QuizClient extends JFrame {
             }
 
             System.err.println("RMI Call Failed: " + e.getMessage());
-            // Try to reconnect with Failover
-            System.out.println("Attempting Failover Reconnect...");
+            // Try to reconnect with Failover (Limitless retry? Or One pass?)
+            System.out.println("Attempting Failover Reconnect to " + serverList.size() + " nodes...");
 
             for (String serverAddr : serverList) {
-                try {
-                    String[] parts = serverAddr.split(":");
-                    Registry registry = LocateRegistry.getRegistry(parts[0], Integer.parseInt(parts[1]));
-                    service = (QuizService) registry.lookup("QuizService");
+                if (attemptConnection(serverAddr)) {
                     System.out.println("Reconnected to " + serverAddr);
-                    return task.execute(); // Retry success
-                } catch (Exception ex) {
+                    try {
+                        // Retry the original task
+                        return task.execute();
+                    } catch (Exception retryEx) {
+                        System.err.println("Retry execution failed: " + retryEx.getMessage());
+                        // If retry failed with network error, continue loop. Else return null.
+                        if (!isConnectionError(retryEx))
+                            return null;
+                    }
                 }
             }
 
@@ -196,7 +256,7 @@ public class QuizClient extends JFrame {
 
     private boolean isConnectionError(Exception e) {
         if (e instanceof java.rmi.ConnectException || e instanceof java.rmi.ConnectIOException
-                || e instanceof java.rmi.UnknownHostException) {
+                || e instanceof java.rmi.UnknownHostException || e instanceof java.rmi.NoSuchObjectException) {
             return true;
         }
         String msg = e.getMessage();

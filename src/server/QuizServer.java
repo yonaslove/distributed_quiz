@@ -34,8 +34,43 @@ public class QuizServer extends UnicastRemoteObject implements ElectionService {
 
     private void loadConfig() {
         config = new java.util.Properties();
+
+        // 1. Load basic properties if exists
         try (java.io.InputStream input = new java.io.FileInputStream("config.properties")) {
             config.load(input);
+        } catch (Exception e) {
+        }
+
+        // 2. Load peers.txt (The Authority on Cluster Topology)
+        allNodes.clear(); // Reset to avoid duplicates
+        try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader("peers.txt"))) {
+            String line;
+            int count = 1;
+            while ((line = br.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#"))
+                    continue;
+
+                // Format: IP:Port
+                // We map them to IDs 1, 2, 3, 4 sequentially based on file order
+                config.setProperty("node." + count, line);
+                allNodes.add(count);
+
+                // Check if this line matches MY port/binding?
+                // Actually, Server ID is passed as arg. We just assume line N corresponds to
+                // Node N.
+                if (count == this.nodeId) {
+                    String[] parts = line.split(":");
+                    this.myPort = Integer.parseInt(parts[1]);
+                    // Also set IP property for later usage
+                    config.setProperty("my.ip", parts[0]);
+                }
+                count++;
+            }
+            System.out.println("Loaded " + allNodes.size() + " peers from peers.txt");
+        } catch (Exception e) {
+            System.err.println("Could not load peers.txt. Falling back to legacy config.");
+            // Fallback to old logic
             for (String key : config.stringPropertyNames()) {
                 if (key.startsWith("node.")) {
                     int nId = Integer.parseInt(key.split("\\.")[1]);
@@ -46,16 +81,23 @@ public class QuizServer extends UnicastRemoteObject implements ElectionService {
                     }
                 }
             }
-            java.util.Collections.sort(allNodes);
-        } catch (Exception e) {
-            System.err.println("Could not load config.properties. Using Default.");
-            allNodes.add(1);
-            allNodes.add(2);
         }
+        java.util.Collections.sort(allNodes);
     }
 
     private String params(int id) {
         return "[ID:" + id + "]";
+    }
+
+    public java.util.List<String> getTopologyStrings() {
+        java.util.List<String> list = new java.util.ArrayList<>();
+        for (int id : allNodes) {
+            String val = config.getProperty("node." + id);
+            if (val != null) {
+                list.add(val);
+            }
+        }
+        return list;
     }
 
     // ---------------- Election Service Impl ----------------
@@ -68,6 +110,16 @@ public class QuizServer extends UnicastRemoteObject implements ElectionService {
     @Override
     public int getNodeId() throws RemoteException {
         return nodeId;
+    }
+
+    @Override
+    public int getCurrentLeaderId() throws RemoteException {
+        return currentLeaderId;
+    }
+
+    @Override
+    public java.util.List<String> getClusterTopology() throws RemoteException {
+        return getTopologyStrings();
     }
 
     @Override
@@ -257,7 +309,11 @@ public class QuizServer extends UnicastRemoteObject implements ElectionService {
     public static void main(String[] args) {
         int id = 1; // Default ID
         if (args.length > 0) {
-            id = Integer.parseInt(args[0]);
+            // Sanitize input: remove any non-numeric characters (like quotes ' or ")
+            String cleanArg = args[0].replaceAll("[^0-9]", "");
+            if (!cleanArg.isEmpty()) {
+                id = Integer.parseInt(cleanArg);
+            }
         }
 
         try {

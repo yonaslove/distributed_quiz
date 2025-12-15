@@ -47,8 +47,11 @@ public interface QuizService extends Remote {
 
         boolean resetStudentSubmission(int studentId, int subjectId) throws RemoteException; // Allow retry
 
-        // Distributed Consistency
+        // Distributed Features
         void replicateSubmission(int studentId, int score) throws RemoteException;
+
+        // Topology Sync (For Auto-Failover)
+        java.util.List<String> getClusterTopology() throws RemoteException;
 
         // Subjects
         List<Subject> getAllSubjects() throws RemoteException;
